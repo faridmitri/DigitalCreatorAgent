@@ -1,58 +1,94 @@
-"""TrendResearcher — uses SerpAPI's multi-engine MCP to find a rising trend."""
-import logging
-import os
+"""Researcher: 2-stage sub-pipeline.
 
-from google.adk.agents import LlmAgent
-from google.adk.tools.mcp_tool import MCPToolset, StreamableHTTPConnectionParams
+Stage 1 (ParallelAgent): four discoverers concurrently fetch rising posts
+        from Reddit, each targeting their assigned subreddit.
+Stage 2 (LlmAgent): finalizer dedups against blog history, picks the
+        highest-score survivor, emits selected_trend.
+"""
 
-from ..prompts import RESEARCHER_PROMPT
-from ..tools import get_recent_blog_topics
+from google.adk.agents import LlmAgent, ParallelAgent, SequentialAgent
 
+from ..prompts import (
+    TECH_TRENDS_DISCOVERER_PROMPT,
+    GOOGLE_NEWS_DISCOVERER_PROMPT,
+    GOOGLE_TRAINING_DISCOVERER_PROMPT,
+    GOOGLE_CERT_DISCOVERER_PROMPT,
+    TREND_FINALIZER_PROMPT,
+)
+from ..tools import (
+    fetch_rising_posts,
+    get_recent_blog_topics,
+)
 
-# ---------------------------------------------------------------------------
-# Logging hygiene — quiet noisy libraries AND redact the SerpAPI key
-# ---------------------------------------------------------------------------
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-
-class _RedactSerpapiKey(logging.Filter):
-    """Replaces the SerpAPI key with '***SERPAPI_KEY***' in any log record."""
-    def filter(self, record: logging.LogRecord) -> bool:
-        key = os.environ.get("SERPAPI_KEY")
-        if key:
-            if isinstance(record.msg, str) and key in record.msg:
-                record.msg = record.msg.replace(key, "***SERPAPI_KEY***")
-            if record.args:
-                record.args = tuple(
-                    a.replace(key, "***SERPAPI_KEY***") if isinstance(a, str) and key in a else a
-                    for a in record.args
-                )
-        return True
+_DISCOVERER_MODEL = "gemini-2.5-flash-lite"
+_FINALIZER_MODEL = "gemini-2.5-flash"
 
 
-logging.getLogger().addFilter(_RedactSerpapiKey())
+tech_trends_discoverer = LlmAgent(
+    name="tech_trends_discoverer",
+    model=_DISCOVERER_MODEL,
+    description="Finds rising posts from r/artificial.",
+    instruction=TECH_TRENDS_DISCOVERER_PROMPT,
+    tools=[fetch_rising_posts],
+    output_key="tech_trends_candidates",
+)
 
+google_news_discoverer = LlmAgent(
+    name="google_news_discoverer",
+    model=_DISCOVERER_MODEL,
+    description="Finds rising posts from r/singularity.",
+    instruction=GOOGLE_NEWS_DISCOVERER_PROMPT,
+    tools=[fetch_rising_posts],
+    output_key="google_news_candidates",
+)
 
-# ---------------------------------------------------------------------------
-# Toolset — one connection to SerpAPI's MCP server
-# ---------------------------------------------------------------------------
-serpapi_toolset = MCPToolset(
-    connection_params=StreamableHTTPConnectionParams(
-        url=f"https://mcp.serpapi.com/{os.environ['SERPAPI_KEY']}/mcp",
-    ),
-    tool_filter=["search"],
+google_training_discoverer = LlmAgent(
+    name="google_training_discoverer",
+    model=_DISCOVERER_MODEL,
+    description="Finds rising posts from r/learnmachinelearning.",
+    instruction=GOOGLE_TRAINING_DISCOVERER_PROMPT,
+    tools=[fetch_rising_posts],
+    output_key="google_training_candidates",
+)
+
+google_cert_discoverer = LlmAgent(
+    name="google_cert_discoverer",
+    model=_DISCOVERER_MODEL,
+    description="Finds rising posts from r/googlecloud.",
+    instruction=GOOGLE_CERT_DISCOVERER_PROMPT,
+    tools=[fetch_rising_posts],
+    output_key="google_cert_candidates",
 )
 
 
-# ---------------------------------------------------------------------------
-# Agent
-# ---------------------------------------------------------------------------
-researcher_agent = LlmAgent(
-    name="trend_researcher",
-    model="gemini-2.5-flash",
-    description="Finds one validated rising trend across tech, AI, Google news, and Google certifications.",
-    instruction=RESEARCHER_PROMPT,
-    tools=[serpapi_toolset, get_recent_blog_topics],
+parallel_discovery = ParallelAgent(
+    name="parallel_discovery",
+    description="Runs four Reddit discoverers concurrently.",
+    sub_agents=[
+        tech_trends_discoverer,
+        google_news_discoverer,
+        google_training_discoverer,
+        google_cert_discoverer,
+    ],
+)
+
+
+trend_finalizer = LlmAgent(
+    name="trend_finalizer",
+    model=_FINALIZER_MODEL,
+    description="Selects the best candidate trend from Reddit rising posts.",
+    instruction=TREND_FINALIZER_PROMPT,
+    tools=[get_recent_blog_topics],
     output_key="selected_trend",
+)
+
+
+# FIX 1: renamed from `researcher` to `researcher_agent` to match
+# sub_agents/__init__.py which imports `researcher_agent`.
+# FIX 2: all imports above are now relative (..prompts, ..tools)
+# to be consistent with every other sub-agent in this package.
+researcher_agent = SequentialAgent(
+    name="researcher",
+    description="Two-stage research pipeline: parallel Reddit discovery then finalization.",
+    sub_agents=[parallel_discovery, trend_finalizer],
 )
