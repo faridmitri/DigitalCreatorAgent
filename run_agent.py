@@ -12,13 +12,12 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 from trend_agent import root_agent
+from trend_agent.tools.indexing_tool import request_google_indexing
 
 
 async def run_pipeline():
     session_service = InMemorySessionService()
 
-    # Pre-initialize all discoverer state keys so prompts never
-    # crash on missing keys if a subreddit returns zero posts
     session = await session_service.create_session(
         app_name="trend_agent",
         user_id="cloud_scheduler",
@@ -56,12 +55,31 @@ async def run_pipeline():
                     final_response = text
                     print(f"  ✓ Stage complete: {text[:80]}...")
 
-    if final_response:
-        print("\nPipeline complete:", final_response)
-        sys.exit(0)
-    else:
+    if not final_response:
         print("ERROR: Pipeline produced no final response.")
         sys.exit(1)
+
+    print("\nPipeline complete:", final_response)
+
+    # --- Indexing ping (no LLM, no extra cost) ---
+    current_session = await session_service.get_session(
+        app_name="trend_agent",
+        user_id="cloud_scheduler",
+        session_id=session.id,
+    )
+    published_url = current_session.state.get("published_url")
+
+    if published_url:
+        print(f"\n↳ Requesting Google indexing for: {published_url}")
+        result = request_google_indexing(published_url)
+        if result.get("success"):
+            print(f"✓ Indexing ping sent — {result.get('notify_time')}")
+        else:
+            print(f"⚠ Indexing ping failed: {result.get('error')}")
+    else:
+        print("⚠ No published_url in session state — skipping indexing ping")
+
+    sys.exit(0)
 
 
 if __name__ == "__main__":
