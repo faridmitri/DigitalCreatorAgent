@@ -5,17 +5,31 @@ from google.auth.transport.requests import Request
 
 
 def request_google_indexing(url: str) -> dict:
-    """
-    Pings Google Indexing API to request crawl of a newly published URL.
+    """Ping Google Indexing API to request crawl of a newly published URL.
+
     Called directly from run_agent.py — no LLM agent needed.
+
+    Returns:
+        On success: {"success": True, "url": "...", "notify_time": "..."}
+        On failure: {"error": "<reason>"}
     """
+    client_id = os.environ.get("BLOGGER_CLIENT_ID")
+    client_secret = os.environ.get("BLOGGER_CLIENT_SECRET")
+    refresh_token = os.environ.get("BLOGGER_REFRESH_TOKEN")
+
+    if not all([client_id, client_secret, refresh_token]):
+        return {
+            "error": "Missing env vars: BLOGGER_CLIENT_ID, "
+                     "BLOGGER_CLIENT_SECRET, or BLOGGER_REFRESH_TOKEN"
+        }
+
     try:
         creds = Credentials(
             token=None,
-            refresh_token=os.environ["BLOGGER_REFRESH_TOKEN"],
+            refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=os.environ["BLOGGER_CLIENT_ID"],
-            client_secret=os.environ["BLOGGER_CLIENT_SECRET"],
+            client_id=client_id,
+            client_secret=client_secret,
             scopes=["https://www.googleapis.com/auth/indexing"],
         )
         creds.refresh(Request())
@@ -38,9 +52,7 @@ def request_google_indexing(url: str) -> dict:
                 "notify_time": meta.get("latestUpdate", {}).get("notifyTime", ""),
             }
 
-        return {
-            "error": f"Indexing API {response.status_code}: {response.text}"
-        }
+        return {"error": f"Indexing API {response.status_code}: {response.text}"}
 
     except Exception as e:
         return {"error": str(e)}

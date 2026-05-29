@@ -185,7 +185,7 @@ Do not keyword-stuff. Every mention must read naturally.
 ============================================================
 CONTENT RULES
 ============================================================
-- Length: 700-1000 words.
+- Length: 1000-2000 words.
 - Voice: confident, factual, engaging. No marketing fluff.
 - Open with a strong hook (1-2 sentences) containing the primary keyword
   and surfacing WHY this matters right now.
@@ -252,37 +252,38 @@ FORMAT RULES
 - NO Markdown anywhere.
 
 ============================================================
-ALSO PRODUCE (outside the HTML)
+OUTPUT FORMAT  (enforced by output_schema=BlogDraft)
 ============================================================
-- title: 50-65 characters. Primary keyword near the start. Descriptive,
-  not clickbait. A colon or em-dash is fine.
+Output a single JSON object. No prose before or after. No markdown fences.
+All six fields are required:
 
-- meta_description: 140-160 characters. 1-2 sentences. Must contain the
-  primary keyword. Summarizes the post and gives a reason to click.
+- "title": 50-65 char SEO title. Primary keyword near the start.
+  Descriptive, not clickbait. A colon or em-dash is fine.
 
-- slug: 3-6 words, lowercase, hyphens only, ASCII only, no stop words.
-  Must contain the primary keyword.
-  Example: "gemini-3-features-release"
+- "meta_description": 140-160 characters. 1-2 sentences. Must contain
+  the primary keyword. Summarizes the post and gives a reason to click.
 
-- image_prompt: One sentence describing a cover image for this post.
-  Constraints: no text, no brand logos, no real people, editorial
-  illustration style.
+- "slug": 3-6 words, lowercase, hyphens only, ASCII only, no stop words.
+  Must contain the primary keyword. Example: "gemini-3-features-release"
 
-- labels: 3-5 tags. Include the primary keyword and top secondary keywords.
-  Example: ["Gemini 3", "Google AI", "LLM", "Vertex AI"]
+- "html": The complete HTML body following all STRUCTURE and FORMAT RULES
+  above — from the intro paragraph through the Sources section and JSON-LD
+  script block. Escape any double quotes inside the HTML as \" so the
+  outer JSON string stays valid.
 
-============================================================
-OUTPUT FORMAT
-============================================================
-Output STRICT JSON on the LAST line of your reply. Nothing after it.
-No markdown fences. Escape inner quotes so the JSON parses cleanly.
+- "image_prompt": One sentence describing the cover image. Constraints:
+  no text, no brand logos, no real people, editorial illustration style.
 
-{{"title": "<title>",
-  "meta_description": "<140-160 char summary>",
-  "slug": "<lowercase-hyphenated-slug>",
-  "html": "<the full HTML body as a single escaped string>",
-  "image_prompt": "<one descriptive sentence>",
-  "labels": ["<label1>", "<label2>", "<label3>"]}}
+- "labels": Array of 3-5 tag strings. Include the primary keyword and
+  top secondary keywords. Example: ["Gemini 3", "Google AI", "LLM", "Vertex AI"]
+
+Example shape (values abbreviated):
+{{"title": "Cloud Run GPU Support Is Now GA: A Developer Guide",
+  "meta_description": "Cloud Run GPU support just went GA...",
+  "slug": "cloud-run-gpu-support",
+  "html": "<p>...</p>...<script type=\"application/ld+json\">...</script>",
+  "image_prompt": "Abstract illustration of cloud servers with glowing GPU chips...",
+  "labels": ["Cloud Run", "Google Cloud", "GPU", "Serverless"]}}
 """
 
 
@@ -293,15 +294,17 @@ No markdown fences. Escape inner quotes so the JSON parses cleanly.
 IMAGE_CREATOR_PROMPT = """\
 You are the image generator stage of a blog-post pipeline.
 
-Image prompt to render: {blog_draft_image_prompt}
+BLOG DRAFT:
+{blog_draft}
 
 TASK:
-1. Call generate_cover_image EXACTLY ONCE with:
-     prompt       = the image prompt above (verbatim)
+1. Extract the `image_prompt` field from the blog draft above.
+2. Call generate_cover_image EXACTLY ONCE with:
+     prompt       = the image_prompt value (verbatim)
      aspect_ratio = "16:9"
-2. If the result contains `cover_image_url`, output ONLY that URL.
+3. If the result contains `cover_image_url`, output ONLY that URL.
    No commentary, no quotes, no markdown.
-3. If the result contains `error`, output:
+4. If the result contains `error`, output:
      ERROR: <error message>
    and stop.
 
@@ -317,30 +320,30 @@ BLOGGER_PUBLISHER_PROMPT = """You are the BloggerPublisher.
 
 Publish a finished blog post to Blogger by calling publish_blog_post exactly once.
 
-INPUTS — pass these verbatim to the tool:
-- Title:            {blog_draft_title}
-- Meta description: {blog_draft_meta_description}
-- Slug:             {blog_draft_slug}
-- Labels:           {blog_draft_labels}
-- HTML body:        {blog_draft_html}
-- Cover image URL:  {cover_image_url}
+BLOG DRAFT:
+{blog_draft}
+
+COVER IMAGE URL: {cover_image_url}
 
 WORKFLOW:
-1. If Cover image URL starts with "ERROR:" or is empty:
+1. Extract these fields from the blog draft above:
+   title, meta_description, slug, labels, html
+
+2. If Cover image URL starts with "ERROR:" or is empty:
    Output: ERROR: cannot publish without cover image
    Stop. Do not call the tool.
 
-2. Otherwise call publish_blog_post with EXACTLY these arguments verbatim:
-   - title             = Title
-   - html_content      = HTML body
-   - cover_image_url   = Cover image URL
-   - labels            = Labels (already a list of strings)
-   - meta_description  = Meta description
-   - slug              = Slug
+3. Otherwise call publish_blog_post with EXACTLY these arguments verbatim:
+   - title             = extracted title
+   - html_content      = extracted html
+   - cover_image_url   = the Cover image URL above
+   - labels            = extracted labels (list of strings)
+   - meta_description  = extracted meta_description
+   - slug              = extracted slug
 
-   Pass empty strings as empty strings. Do NOT invent values.
+   Pass values verbatim. Do NOT invent values.
 
-3. From the tool result:
+4. From the tool result:
    - If it contains "published_url": output ONLY that URL. Nothing else.
    - If it contains "error": output ERROR: <the error message>
 
@@ -357,18 +360,19 @@ FACEBOOK_POSTER_PROMPT = """You are the FacebookPoster.
 Publish a Facebook Page post that drives traffic to a freshly-published
 blog article, by calling post_to_facebook exactly once.
 
-INPUTS:
-- Blog title:    {blog_draft_title}
-- Blog summary:  {blog_draft_meta_description}
-- Published URL: {published_url}
-- Post labels:   {blog_draft_labels}
+BLOG DRAFT (extract title, meta_description, labels from here):
+{blog_draft}
+
+PUBLISHED URL: {published_url}
 
 WORKFLOW:
-1. If Published URL starts with "ERROR:" or is empty:
+1. Extract `title`, `meta_description`, and `labels` from the blog draft above.
+
+2. If Published URL starts with "ERROR:" or is empty:
    Output: ERROR: cannot post to Facebook without blog URL
    Stop. Do not call the tool.
 
-2. Compose the Facebook message following ALL of these rules:
+3. Compose the Facebook message following ALL of these rules:
 
    MESSAGE RULES:
    - 80-180 characters total (Facebook truncates longer text in feeds)
@@ -397,13 +401,13 @@ WORKFLOW:
 
    #AI #Gemini3 #VertexAI
 
-3. Call post_to_facebook with:
+4. Call post_to_facebook with:
    - message  = the full composed text (hook + blank line + hashtags)
    - link_url = the Published URL above
 
    Call the tool exactly ONCE. Do not retry on errors.
 
-4. From the tool result:
+5. From the tool result:
    - If it contains "facebook_post_url": output ONLY that URL. Nothing else.
    - If it contains "error": output ERROR: <the error message>
 """

@@ -23,13 +23,26 @@ def _build_blogger_service():
 
     Same auth pattern as blogger_tool.py — refresh-token flow, no
     interactive consent needed at runtime.
+
+    Raises ValueError if required env vars are missing so the caller's
+    try/except returns a clean {"error": ...} dict instead of KeyError.
     """
+    client_id = os.environ.get("BLOGGER_CLIENT_ID")
+    client_secret = os.environ.get("BLOGGER_CLIENT_SECRET")
+    refresh_token = os.environ.get("BLOGGER_REFRESH_TOKEN")
+
+    if not all([client_id, client_secret, refresh_token]):
+        raise ValueError(
+            "Missing Blogger env vars: BLOGGER_CLIENT_ID, "
+            "BLOGGER_CLIENT_SECRET, or BLOGGER_REFRESH_TOKEN"
+        )
+
     creds = Credentials(
         token=None,
-        refresh_token=os.environ["BLOGGER_REFRESH_TOKEN"],
+        refresh_token=refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.environ["BLOGGER_CLIENT_ID"],
-        client_secret=os.environ["BLOGGER_CLIENT_SECRET"],
+        client_id=client_id,
+        client_secret=client_secret,
         scopes=["https://www.googleapis.com/auth/blogger"],
     )
     creds.refresh(Request())
@@ -71,10 +84,14 @@ def get_recent_blog_topics(max_posts: int = 10) -> dict:
 
         service = _build_blogger_service()
 
+        blog_id = os.environ.get("BLOGGER_BLOG_ID")
+        if not blog_id:
+            return {"error": "Missing BLOGGER_BLOG_ID env var"}
+
         response = (
             service.posts()
             .list(
-                blogId=os.environ["BLOGGER_BLOG_ID"],
+                blogId=blog_id,
                 maxResults=max_posts,
                 orderBy="PUBLISHED",       # newest first
                 fetchBodies=False,         # we only need metadata

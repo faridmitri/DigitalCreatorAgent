@@ -3,11 +3,20 @@ from google.adk.agents import LlmAgent
 
 from ..prompts import WRITER_PROMPT
 
+from pydantic import BaseModel, Field
+
+class BlogDraft(BaseModel):
+    title: str = Field(description="50-65 char SEO title")
+    meta_description: str = Field(description="140-160 char meta")
+    slug: str = Field(description="lowercase-hyphenated")
+    html: str = Field(description="full HTML body")
+    image_prompt: str = Field(description="one sentence")
+    labels: list[str] = Field(description="3-5 tags")
+
 writer_agent = LlmAgent(
     name="blog_writer",
     model="gemini-2.5-flash",
-    description="Writes a 700-1000 word HTML blog post from a researched trend.",
     instruction=WRITER_PROMPT,
-    tools=[],  # No tools — pure text transformation
-    output_key="blog_draft",
+    output_schema=BlogDraft,   # ← framework enforces validity
+    output_key="blog_draft",   # ← state["blog_draft"] is now a dict
 )
