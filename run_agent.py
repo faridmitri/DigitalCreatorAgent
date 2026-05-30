@@ -1,12 +1,11 @@
 import asyncio
-import logging
 import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-logging.getLogger("opentelemetry").setLevel(logging.CRITICAL)
+from google.adk.runners import Runner
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService

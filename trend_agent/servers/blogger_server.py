@@ -165,12 +165,23 @@ def publish_post(
 
         service = _build_service()
 
+
+
+        # NOTE on meta_description: the Blogger API's customMetaData field does
+        # NOT set a post's Search Description — Blogger ignores it for that
+        # purpose. The reliable way to get a meta description into the rendered
+        # page is to embed a <meta> tag in the post body itself.
+        meta_html = ""
+        if meta_description:
+            safe_desc = meta_description.replace('"', "&quot;")
+            meta_html = f'<meta name="description" content="{safe_desc}" />\n'
+
         cover_img_html = (
             f'<img src="{cover_image_url}" '
             f'alt="{title}" '
             f'style="width:100%;height:auto;display:block;margin-bottom:1.5em;" />'
         )
-        full_html = cover_img_html + html_content
+        full_html = meta_html + cover_img_html + html_content
 
         post_body: dict = {
             "kind": "blogger#post",
@@ -178,8 +189,7 @@ def publish_post(
             "content": full_html,
             "labels": labels or [],
         }
-        if meta_description:
-            post_body["customMetaData"] = meta_description
+        
         if slug:
             clean_slug = slug.strip().strip("/").lower().replace(" ", "-")
             post_body["permalink"] = f"/{clean_slug}.html"

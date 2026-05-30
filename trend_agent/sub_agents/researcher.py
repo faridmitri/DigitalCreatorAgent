@@ -16,10 +16,6 @@ not work there). Each McpToolset spawns the feed server over stdio, discovers
 its tools, and tool_filter narrows the visible surface to one tool.
 """
 
-import os
-import sys
-from pathlib import Path
-
 from google.adk.agents import LlmAgent, ParallelAgent, SequentialAgent
 
 from ..prompts import (
