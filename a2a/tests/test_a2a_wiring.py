@@ -1,8 +1,7 @@
 """Offline structural tests for the A2A wiring.
 
 Asserts that each specialist builds a valid AgentCard with at least one skill,
-and that the orchestrator is wired with three RemoteA2aAgent sub-agents
-pointing at the well-known card path. No servers are started; no network.
+and that the orchestrator uses the send_message tool (agent-as-a-tool pattern). No servers are started; no network.
 """
 
 from google.adk.agents.remote_a2a_agent import (
@@ -50,15 +49,16 @@ def test_publisher_card_and_stages():
     assert root_agent.after_agent_callback is not None
 
 
-def test_orchestrator_consumes_three_remote_agents():
-    from orchestrator.agent import root_agent
+def test_orchestrator_uses_send_message_tool():
+    import inspect
+    from orchestrator.agent import root_agent, send_message
 
     assert root_agent.name == "orchestrator"
-    assert len(root_agent.sub_agents) == 3
-    for sub in root_agent.sub_agents:
-        assert isinstance(sub, RemoteA2aAgent)
-    names = {s.name for s in root_agent.sub_agents}
-    assert names == {"researcher_agent", "writer_agent", "publisher_agent"}
+    assert root_agent.tools, "orchestrator should expose the send_message tool"
+    tool_names = [getattr(t, "__name__", getattr(t, "name", "")) for t in root_agent.tools]
+    assert "send_message" in tool_names
+    params = list(inspect.signature(send_message).parameters)
+    assert params[:2] == ["agent_name", "task"]
 
 
 def test_card_path_constant():

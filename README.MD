@@ -1,130 +1,110 @@
-# Digital Worker Agent
+# 🤖 Digital Worker Agent
 
-> An autonomous AI agent that researches trending technology topics, writes SEO-optimized articles, generates cover images, and publishes content to Blogger and Facebook — all with zero human intervention.
+> An autonomous AI content engine that researches trending technology, writes SEO-optimized articles, generates cover art, and publishes to Blogger and Facebook — every day, with zero human input.
 
-This repository contains **the same pipeline built two ways**, side by side.
-Both produce identical results: a post on Blogger, a Facebook cross-post, and
-an Indexing API ping. They differ in architecture and deployment model.
+<p align="center">
+  <img src="img/monolith_architecture.png" alt="Architecture overview" width="100%">
+</p>
 
-```
-contentCreator/
-├── monolith/   ← One SequentialAgent · Cloud Run Job · auto-deploys on push
-└── a2a/        ← Orchestrator + 3 specialist services · default deploy manually or auto-deploys on push
-```
-
-Both are open source. Both ship with a complete Cloud Run workflow. You choose
-which to deploy.
+<p align="center">
+  <em>Built on Google's Agent Development Kit (ADK) · Gemini 2.5 · Imagen 4 · Model Context Protocol (MCP) · Agent-to-Agent (A2A) protocol · Cloud Run</em>
+</p>
 
 ---
 
-## What it does
+## ✨ Why this repo is interesting
 
-Every day, automatically:
+This is **one production pipeline, implemented two ways** — a rare side-by-side study of the same real workload as a **monolith** and as a **distributed multi-agent system**. Both ship complete, tested, and deploy to Cloud Run with full CI/CD. You can run either locally in minutes and read the exact same business logic expressed in two architectural styles.
 
-1. **Discovers** a timely Google Cloud topic (parallel feed + news scanning)
-2. **Writes** a 1 000–2 000 word SEO-optimized blog post (Gemini 2.5 Flash)
-3. **Generates** a cover image (Imagen 4 → Cloud Storage)
-4. **Publishes** to Blogger
-5. **Cross-posts** a caption + link to a Facebook Page
-6. **Pings** the Google Indexing API for a fast recrawl
+It's a working reference for the questions every agent team eventually asks:
+
+- When is a single `SequentialAgent` enough, and when do you split into services?
+- How does shared session state differ from passing JSON across an A2A boundary?
+- How do you wire agent-to-agent auth, agent cards, and orchestration *correctly*?
+
+The answer lives in code you can run, not slides.
 
 ---
 
-## The two architectures
+## 🎯 What it does
+
+Every day, automatically, the agent:
+
+| # | Stage | How |
+|---|-------|-----|
+| 1 | **Discovers** a timely Google Cloud topic | Parallel scan of 4 feeds + Google News, deduped against post history |
+| 2 | **Writes** a 1,000–2,000 word SEO article | Gemini 2.5 Flash with a validated `BlogDraft` schema |
+| 3 | **Generates** a cover image | Imagen 4 → Cloud Storage |
+| 4 | **Publishes** to Blogger | Blogger API v3, content-safety gated |
+| 5 | **Cross-posts** to Facebook | Caption + link card, Graph API |
+| 6 | **Requests indexing** | Google Indexing API ping for fast recrawl |
+
+Live example: a daily-updated tech blog, fully operated by this agent.
+
+---
+
+## 🏛️ The two architectures
 
 ### `monolith/` — one process, one deployable
 
-![A2A Architecture](img/monolith_architecture.png)
+<p align="center">
+  <img src="img/monolith_architecture.png" alt="Monolith architecture" width="100%">
+</p>
 
-```
-Cloud Scheduler ──► Cloud Run Job
-                         │
-                    SequentialAgent
-                         │
-          ┌──────────────┼──────────────────────┐
-          ▼              ▼                       ▼
-      researcher      writer            image → blogger → facebook
-      (parallel       (Gemini +              (policy gate on
-       discovery +     output_schema)         publish actions)
-       finalizer)          │
-                           └──► indexing ping (run_agent.py)
-```
+Five sub-agents run in sequence inside a single Python process. Data flows through **shared session state** — no network hops, no serialization. One Docker image, one Cloud Run **Job**, one thing to monitor. This is the deployed default and the right choice for a fixed daily job.
 
-Five sub-agents run in sequence in a single Python process. Data flows through
-**shared session state** — no network boundaries, no serialization. One Docker
-image, one Cloud Run Job, one thing to monitor.
+**Stack:** ADK `SequentialAgent` + `ParallelAgent` · MCP (3 stdio servers) · Gemini 2.5 Flash · Imagen 4 · Blogger v3 · Facebook Graph · GCS · Indexing API.
 
-**Stack:** ADK `SequentialAgent` + `ParallelAgent`, MCP (3 stdio servers),
-Gemini 2.5 Flash, Imagen 4, Blogger v3, Facebook Graph API, GCS, Indexing API.
+### `a2a/` — four services, Agent-to-Agent protocol
 
-### `a2a/` — four services, A2A protocol
+<p align="center">
+  <img src="img/a2a_architecture.png" alt="A2A architecture" width="100%">
+</p>
 
-![A2A Architecture](img/a2a_architecture.png)
+The same five stages, regrouped into **three independent specialist services** coordinated by an **orchestrator**. Each specialist is its own Cloud Run Service that publishes an **Agent Card** and speaks the **A2A protocol**. The orchestrator is an `LlmAgent` whose only tool is `send_message(agent_name, task)` — it keeps control across all three delegations, feeding each result into the next call (the "agent-as-a-tool" pattern, not sub-agent transfer).
 
-```
-Cloud Scheduler ──► Cloud Run Job (orchestrator)
-                         │  LlmAgent + send_message tool
-                         │          
-              ┌──────────┼────────────────┐
-              ▼          ▼                ▼
-   researcher-agent  writer-agent  publisher-agent
-   Cloud Run Service  Cloud Run Service  Cloud Run Service
-   :8001 (A2A)        :8002 (A2A)        :8003 (A2A)
-   parallel discovery  BlogDraft schema   image+blogger+
-   + finalizer         output_key         facebook+indexing
-```
-
-The same five stages are split into three independent services that talk over
-the **Agent-to-Agent (A2A)** protocol.
-The orchestrator is an `LlmAgent` whose only tool is
-`send_message(agent_name, task)` — it keeps control across all three
-delegations, feeds each result into the next call.
-
-**Stack:** ADK `LlmAgent` + `ParallelAgent`, A2A (`to_a2a`, `AgentCard`,
-`RemoteAgentConnections`), MCP (same 3 servers), same models and APIs.
+**Stack:** ADK `LlmAgent` + `to_a2a` + `AgentCard` + `RemoteAgentConnections` · A2A JSON-RPC · the *same* MCP servers, models, and APIs.
 
 ---
 
-## Key differences
+## ⚖️ Monolith vs A2A at a glance
 
 | | `monolith/` | `a2a/` |
 |---|---|---|
 | **Shape** | 1 `SequentialAgent`, 5 sub-agents | Orchestrator + 3 specialist services |
 | **Data between stages** | Shared session state | JSON over the A2A network boundary |
-| **Deployables** | 1 Cloud Run Job | 3 Cloud Run Services + 1 Cloud Run Job |
-| **CI/CD trigger** | Auto — every push to `main` touching `monolith/**` | Manual — `workflow_dispatch` from the Actions tab or Auto by following instruction inside deploy-a2a.yml |
-| **Service-to-service auth** | N/A (one process) | Google ID token (`USE_CLOUD_RUN_AUTH=true`) |
-| **Scale-to-zero** | Job exits when done | Services scale to zero between runs |
+| **Deployables** | 1 Cloud Run Job | 3 Cloud Run Services + 1 Job |
+| **CI/CD trigger** | Auto on push to `monolith/**` | Manual by default; auto-on-push opt-in |
+| **Service-to-service auth** | N/A (one process) | Google ID token (`USE_CLOUD_RUN_AUTH`) |
+| **Scale-to-zero** | Job exits when done | Services idle at zero between runs |
 | **Idle cost** | ~$0 | ~$0 |
-| **Operational complexity** | Low (one thing to watch) | Higher (4 services, agent cards, auth) |
-| **Best for** | Fixed daily autonomous job | Reusable agents, dynamic routing, teams |
+| **Operational complexity** | Low | Higher (4 services, cards, auth) |
+| **Best for** | A fixed daily autonomous job | Reusable agents, dynamic routing, teams |
 
 ---
 
-## Shared components
+## 🧩 Shared components
 
-Both architectures use the **exact same** external integrations and tool code:
+Both architectures reuse the **exact same** integration and tool code:
 
-- **`feed_server.py`** — GCP blog, release notes, training, Google News (MCP)
-- **`blogger_server.py`** — `list_recent_posts` (dedup) + `publish_post` (MCP)
-- **`facebook_server.py`** — `post_to_page` with sanitize + retry (MCP)
+- **`feed_server.py`** — GCP blog, release notes, training, Google News *(MCP)*
+- **`blogger_server.py`** — `list_recent_posts` (dedup) + `publish_post` *(MCP)*
+- **`facebook_server.py`** — `post_to_page` with caption sanitize + retry *(MCP)*
 - **`imagen_tool.py`** — Imagen 4 cover image → GCS
 - **`indexing_tool.py`** — Google Indexing API ping
-- **`BlogDraft`** Pydantic schema — validated writer output
-- **`policy_gate`** — safety callback on every publish action
+- **`BlogDraft`** — Pydantic schema validating the writer's output
+- **`policy_gate`** — content-safety callback on every publish action
 - **12 GCP secrets** — same Secret Manager names, injected into whichever runs
 
 ---
 
-## Quick start
-
-Clone and set up the shared virtual environment at the repo root:
+## 🚀 Quick start
 
 ```bash
-git https://github.com/faridmitri/my_blogger_agent.git
-cd contentCreator
+git clone https://github.com/faridmitri/my_blogger_agent.git
+cd my_blogger_agent
 python -m venv .venv
-source .venv/bin/activate 
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 ```
 
 ### Run the monolith locally
@@ -133,7 +113,7 @@ source .venv/bin/activate
 cd monolith
 pip install -r requirements.txt
 cp .env.example .env               # fill in the 12 values
-python run_agent.py                # publishes for real — run when ready
+python run_agent.py                # ⚠ publishes for real — run when ready
 ```
 
 ### Run the A2A version locally
@@ -141,149 +121,104 @@ python run_agent.py                # publishes for real — run when ready
 ```bash
 cd a2a
 pip install -r requirements.txt
-cp .env.example .env               # same 12 values; USE_CLOUD_RUN_AUTH=false
+cp .env.example .env               # same 12 values; keep USE_CLOUD_RUN_AUTH=false
 
-# Terminal 1, 2, 3 — one per specialist service:
+# Terminals 1–3, one per specialist service:
 uvicorn agents.researcher_agent.agent:a2a_app --host 127.0.0.1 --port 8001
 uvicorn agents.writer_agent.agent:a2a_app     --host 127.0.0.1 --port 8002
 uvicorn agents.publisher_agent.agent:a2a_app  --host 127.0.0.1 --port 8003
 
-# Terminal 4 — orchestrator:
+# Terminal 4 — drive the pipeline:
 python -m orchestrator.run
 ```
 
+Run the offline test suites any time (no network, no publishing):
+
+```bash
+cd monolith && pytest tests/ -q
+cd a2a       && pytest tests/ -q
+```
+
 ---
 
-## Deploying to Cloud Run
+## ☁️ Deploying to Cloud Run
 
-Both architectures ship with complete CI/CD. See **`PLAYBOOK.md`** for the
-one-time GCP setup (APIs, Artifact Registry, secrets, Workload Identity
-Federation). Once that's done:
+Both architectures ship with complete GitHub Actions CI/CD. See **`PLAYBOOK.MD`** for one-time GCP setup (APIs, Artifact Registry, the 12 secrets, Workload Identity Federation, IAM roles).
 
-### Method 1 — Deploy the monolith (automatic on push)
+### Monolith — automatic on push
 
-`.github/workflows/deploy-monolith.yml` fires automatically on every push to
-`main` that touches `monolith/**`. It builds from `monolith/Dockerfile`, pushes
-to Artifact Registry, and creates/updates the Cloud Run **Job** `trend-agent-job`
-with all 12 secrets injected.
+`deploy-monolith.yml` fires on every push to `main` touching `monolith/**`: it builds the image, pushes to Artifact Registry, and creates/updates the Cloud Run **Job**.
 
 ```bash
-git add monolith/
-git commit -m "your change"
-git push origin main               # ← triggers the deploy
+git add monolith/ && git commit -m "your change" && git push origin main
 ```
 
-Schedule the job to run daily (one-time, after first deploy):
+### A2A — manual from the Actions tab
 
-```bash
-gcloud scheduler jobs create http monolith-daily \
-  --location=us-central1 --schedule="0 9 * * *" \
-  --time-zone="America/Toronto" \
-  --uri="https://us-central1-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/YOUR_PROJECT_ID/jobs/trend-agent-job:run" \
-  --http-method=POST \
-  --oauth-service-account-email=YOUR_SERVICE_ACCOUNT
-```
-
-Changes to `a2a/**` never trigger this workflow.
-
-### Method 2 — Deploy the A2A system (manual from Actions tab)
-
-`.github/workflows/deploy-a2a.yml` is **`workflow_dispatch`-only** — it never
-fires on push. To deploy the distributed version:
+`deploy-a2a.yml` is `workflow_dispatch`-only by default — it never fires on push, so a routine push only ever deploys the monolith.
 
 1. **GitHub → Actions → "Deploy A2A to Cloud Run"**
-2. Click **Run workflow**
-3. Type `deploy` in the confirmation box
+2. **Run workflow** → type `deploy` to confirm.
 
-The workflow then:
-- Builds all 4 images in parallel
-- Deploys 3 Cloud Run **Services** (`--no-allow-unauthenticated`, scale-to-zero)
-- Captures each service's HTTPS URL
-- Grants the orchestrator's service account `roles/run.invoker` on each service
-- Deploys the orchestrator Cloud Run **Job** with `USE_CLOUD_RUN_AUTH=true`
-  (ID-token auth wired in `orchestrator/remote_agent_connection.py`)
-- Prints the `gcloud scheduler` command to schedule it daily
+It builds all four images, deploys the three Services (`--no-allow-unauthenticated`, scale-to-zero), grants the orchestrator `roles/run.invoker` on each, and deploys the orchestrator **Job** with `USE_CLOUD_RUN_AUTH=true`.
 
-The summary step at the end of the workflow prints the exact Scheduler command
-with your service URLs filled in — copy and run it once.
+> **Want A2A to auto-deploy too?** Uncomment the `push:` block at the top of `deploy-a2a.yml` (the file documents exactly what to change). If both workflows auto-deploy *and* both jobs are scheduled, the blog publishes twice daily — enable intentionally.
 
-#### Enable A2A auto-deploy on push (optional)
-
-If you want A2A to also deploy on push (for example, if you're maintaining only
-the A2A architecture), open `.github/workflows/deploy-a2a.yml` and uncomment
-the `push:` block. The comment block at the top of the file explains exactly
-what to change.
-
-> **Note:** if both workflows have a `push:` trigger, both deploy on every
-> relevant push. Only enable this intentionally.
-
----
-
-## CI/CD summary
+### CI/CD summary
 
 | Workflow | Trigger | Deploys |
 |---|---|---|
-| `deploy-monolith.yml` | Auto — push to `main`, paths: `monolith/**` | Cloud Run **Job** `trend-agent-job` |
-| `deploy-a2a.yml` | Manual — `workflow_dispatch` + confirm "deploy" | 3 Cloud Run **Services** + 1 **Job** |
+| `deploy-monolith.yml` | Auto — push to `main`, paths `monolith/**` | Cloud Run **Job** |
+| `deploy-a2a.yml` | Manual — `workflow_dispatch` (auto-on-push opt-in) | 3 Cloud Run **Services** + 1 **Job** |
 
 ---
 
-## How the A2A services authenticate on Cloud Run
+## 🔐 How A2A services authenticate on Cloud Run
 
-The three specialist services deploy `--no-allow-unauthenticated`. The
-orchestrator calls them with a **Google ID token** whose audience is each
-service's URL. This is handled automatically by `_GoogleIdTokenAuth` in
-`orchestrator/remote_agent_connection.py`, activated when
-`USE_CLOUD_RUN_AUTH=true` (set by the CI workflow on the orchestrator job).
-
-Locally, `USE_CLOUD_RUN_AUTH` defaults to `false` — plain HTTP, no tokens.
+The three specialist services deploy `--no-allow-unauthenticated`. The orchestrator calls them with a **Google ID token** whose audience is each service's URL, handled automatically by `_GoogleIdTokenAuth` in `orchestrator/remote_agent_connection.py` when `USE_CLOUD_RUN_AUTH=true` (set by CI on the orchestrator job). Locally the flag defaults to `false` — plain HTTP, no tokens.
 
 ---
 
-## Repo layout
+## 📁 Repo layout
 
 ```
-contentCreator/
-├── README.md                       ← you are here
-├── PLAYBOOK.md                     ← step-by-step commands (local + deploy)
-├── .github/
-│   └── workflows/
-│       ├── deploy-monolith.yml     ← auto on push (monolith/**)
-│       └── deploy-a2a.yml         ← manual workflow_dispatch or follow instruction to auto on push
+my_blogger_agent/
+├── README.MD                       ← you are here
+├── PLAYBOOK.MD                     ← step-by-step: local run, GCP setup, deploy
+├── img/                            ← architecture + log screenshots
+├── .github/workflows/
+│   ├── deploy-monolith.yml         ← auto on push (monolith/**)
+│   └── deploy-a2a.yml              ← manual; auto-on-push opt-in
 │
 ├── monolith/                       ← THE DEPLOYED SYSTEM
-│   ├── trend_agent/                ← ADK agent package
+│   ├── trend_agent/                ← ADK agent package (5 sub-agents, MCP, tools)
 │   ├── run_agent.py                ← entrypoint
-│   ├── Dockerfile                  ← python:3.12-slim
-│   ├── requirements.txt
-│   ├── tests/
-│   ├── .env.example
-│   └── NOTICE.md
+│   ├── Dockerfile · requirements.txt · tests/ · .env.example
 │
-└── a2a/                            ← DISTRIBUTED REFERENCE / ALSO DEPLOYABLE
-    ├── orchestrator/               ← LlmAgent + send_message tool
+└── a2a/                            ← DISTRIBUTED REFERENCE · ALSO DEPLOYABLE
+    ├── orchestrator/               ← LlmAgent + send_message tool + auth
     ├── agents/
     │   ├── researcher_agent/       ← parallel discovery + finalizer
     │   ├── writer_agent/           ← BlogDraft schema + SEO writer
-    │   └── publisher_agent/        ← image + blogger + facebook + indexing
-    ├── common/                     ← shared prompts, servers, tools, callbacks
-    ├── tests/                      ← 14 offline tests
-    ├── .env.example
-    └── NOTICE.md
+    │   └── publisher_agent/        ← image → blogger → facebook → indexing
+    ├── common/                     ← shared prompts, MCP servers, tools, callbacks
+    ├── tests/ · .env.example · requirements.txt
 ```
 
 ---
 
-## Further reading
+## 📸 Agents in action
 
-- **`PLAYBOOK.md`** — all commands: run locally, one-time GCP setup, deploy each
-  architecture, schedule the job, troubleshoot.
+| Monolith | A2A |
+|---|---|
+| ![Monolith logs](img/logs_monolith.png) | ![A2A logs](img/logs_a2a.png) |
 
+---
 
-## Agents in action
+## 📚 Further reading
 
-### Monolith
-![A2A Architecture](img/logs_monolith.png)
+- **`PLAYBOOK.MD`** — every command: run locally, one-time GCP setup, deploy each architecture, schedule the daily job, and troubleshoot.
 
-### A2A
-![A2A Architecture](img/logs_a2a.png)
+---
+
+<p align="center"><sub>Built with Google ADK · Gemini 2.5 · Imagen 4 · MCP · A2A · Cloud Run · Secret Manager · Artifact Registry · Blogger v3 · Facebook Graph · Google Indexing API</sub></p>

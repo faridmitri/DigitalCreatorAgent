@@ -33,7 +33,7 @@ class BlogDraft(BaseModel):
         description="URL slug: lowercase, words separated by hyphens, ASCII only, 3-6 words, no leading/trailing slash."
     )
     html: str = Field(
-        description="Full post body as HTML. No <html>/<head>/<body> tags. 700-1000 words following the required structure."
+        description="Full post body as HTML. No <html>/<head>/<body> tags. 1000-2000 words following the required structure."
     )
     image_prompt: str = Field(
         description="One concrete sentence describing a cover image for this post, suitable for an image generator."
@@ -46,7 +46,7 @@ class BlogDraft(BaseModel):
 writer_agent = LlmAgent(
     name="blog_writer",
     model="gemini-2.5-flash",
-    description="Writes a structured 700-1000 word HTML blog post from the selected trend.",
+    description="Writes a structured 1000-2000 word HTML blog post from the selected trend.",
     instruction=WRITER_PROMPT,
     output_schema=BlogDraft,
     output_key="blog_draft",
