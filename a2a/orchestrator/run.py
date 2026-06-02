@@ -48,7 +48,7 @@ async def run_pipeline():
     )
 
     print("=" * 60)
-    print("Orchestrator (InstaVibe pattern: LlmAgent + send_message tool)")
+    print("Orchestrator (LlmAgent + send_message tool)")
     print("=" * 60)
     print("Delegating: researcher -> writer -> publisher")
     print("This takes 2-4 minutes.\n")
