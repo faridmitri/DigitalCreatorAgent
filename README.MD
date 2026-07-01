@@ -8,6 +8,7 @@
   <img alt="Imagen 4" src="https://img.shields.io/badge/Imagen-4-EA4335?style=for-the-badge&logo=google&logoColor=white">
   <img alt="MCP" src="https://img.shields.io/badge/MCP-3_servers-FF6F00?style=for-the-badge">
   <img alt="A2A Protocol" src="https://img.shields.io/badge/A2A-Protocol-1A73E8?style=for-the-badge">
+  <img alt="Hosting Cost" src="https://img.shields.io/badge/Hosting-~CA%243%2Fmonth-00C853?style=for-the-badge">
 </p>
 
 <p align="center">
