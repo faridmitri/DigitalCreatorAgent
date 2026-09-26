@@ -1,7 +1,6 @@
-"""Imagen 4 cover-image tool.
+"""Gemini image-generation cover-image tool.
 
-Uses only the officially documented Imagen parameters:
-  https://ai.google.dev/gemini-api/docs/imagen
+Uses the Gemini image model that replaces the retired Imagen 4 endpoints.
 
 Runs against Vertex AI (project + region + ADC) for consistency with
 the rest of the pipeline, then uploads the returned bytes to Cloud
@@ -44,28 +43,35 @@ def generate_cover_image(prompt: str, aspect_ratio: str = "16:9") -> dict:
     if not project or not bucket_name:
         return {"error": "GOOGLE_CLOUD_PROJECT or IMAGE_BUCKET env var not set"}
 
-    # --- 1. Generate the image (official-docs-compliant config) ---
+    # --- 1. Generate the image ---
     try:
         client = genai.Client(vertexai=True, project=project, location=location)
-        response = client.models.generate_images(
-            model="imagen-4.0-fast-generate-001",
-            prompt=prompt,
-            config=types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio=aspect_ratio,
-                person_generation="allow_adult",
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"],
+                image_config=types.ImageConfig(
+                    aspect_ratio=aspect_ratio,
+                ),
             ),
         )
     except Exception as e:
         logger.exception("Imagen API call failed")
         return {"error": f"Imagen API call failed: {e}"}
 
-    if not response.generated_images:
-        return {"error": "Imagen returned no images (likely safety-filtered)"}
-
-    image_bytes = response.generated_images[0].image.image_bytes
+    image_bytes = next(
+        (
+            part.inline_data.data
+            for candidate in response.candidates or []
+            if candidate.content
+            for part in candidate.content.parts or []
+            if part.inline_data and part.inline_data.data
+        ),
+        None,
+    )
     if not image_bytes:
-        return {"error": "Imagen response missing image bytes"}
+        return {"error": "Gemini returned no image (likely safety-filtered)"}
 
     # --- 2. Upload to Cloud Storage explicitly ---
     today = datetime.date.today().isoformat()
